@@ -1,1 +1,5 @@
-pyaudio
+fastapi
+uvicorn
+websockets
+dotenv
+jinja2
