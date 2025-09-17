@@ -3,3 +3,4 @@ uvicorn
 websockets
 dotenv
 jinja2
+httpx
