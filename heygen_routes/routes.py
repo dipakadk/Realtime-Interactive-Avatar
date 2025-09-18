@@ -138,3 +138,22 @@ async def send_text_to_heygen(session_token: str, session_id: str, final_text: s
                               json={"session_id": session_id, "text": final_text, "task_type": "chat"})
         r.raise_for_status()
         return r.json()
+    
+@router.post("/api/interrupt_task", tags=["Interrupt Task"])
+async def interrupt_task(payload: dict):
+    session_token = payload.get("session_token")
+    session_id = payload.get("session_id")
+    if not all([session_token, session_id]):
+        raise HTTPException(status_code=400, detail="Missing params")
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {session_token}"
+    }
+    async with httpx.AsyncClient(timeout=300) as client:
+        resp = await client.post(
+            f"{HEYGEN_SERVER_URL}/v1/streaming.interrupt",
+            headers=headers,
+            json={"session_id": session_id}
+        )
+        resp.raise_for_status()
+        return JSONResponse(content=resp.json())
