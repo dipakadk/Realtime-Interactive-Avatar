@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-websockets
+websocket-client
 dotenv
 jinja2
 httpx

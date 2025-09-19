@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>HeyGen Streaming + Audio Input</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  </head>
+  <body class="bg-gray-100 p-5 font-sans">
+    <div class="max-w-3xl mx-auto bg-white p-5 rounded-lg shadow-md">
+      <div class="flex flex-wrap gap-2.5 mb-5">
+        <input
+          id="avatarID"
+          type="text"
+          placeholder="Avatar ID"
+          value="Wayne_20240711"
+          class="flex-1 min-w-[200px] p-2 border border-gray-300 rounded-md"
+        />
+        <input
+          id="voiceID"
+          type="text"
+          placeholder="Voice ID (optional)"
+          class="flex-1 min-w-[200px] p-2 border border-gray-300 rounded-md"
+        />
+        <button
+          id="startBtn"
+          class="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600 transition-colors"
+        >
+          Start Session
+        </button>
+        <button
+          id="closeBtn"
+          class="px-4 py-2 bg-red-500 text-white rounded-md hover:bg-red-600 transition-colors"
+        >
+          Close Session
+        </button>
+      </div>
+
+      <div class="flex flex-wrap gap-2.5 mb-5">
+        <button
+          id="recordBtn"
+          class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+        >
+          Start Speaking
+        </button>
+        <button
+          id="stopRecordBtn"
+          class="px-4 py-2 bg-indigo-500 text-white rounded-md hover:bg-indigo-600 transition-colors"
+        >
+          Stop Speaking
+        </button>
+      </div>
+
+      <video
+        id="mediaElement"
+        class="w-full max-h-[400px] border rounded-lg my-5"
+        autoplay
+        playsinline
+      ></video>
+      <div
+        id="status"
+        class="p-2.5 bg-gray-50 border border-gray-300 rounded-md h-[120px] overflow-y-auto font-mono text-sm"
+      ></div>
+    </div>
+
+    <script>
+      let sessionInfo = null;
+      let sessionToken = null;
+      let room = null;
+      let ws = null;
+
+      const statusElement = document.getElementById("status");
+      const mediaElement = document.getElementById("mediaElement");
+
+      function updateStatus(msg) {
+        const t = new Date().toLocaleTimeString();
+        statusElement.innerHTML += `[${t}] ${msg}<br>`;
+        statusElement.scrollTop = statusElement.scrollHeight;
+      }
+
+      // Session management
+      async function getToken() {
+        if (!sessionToken) {
+          const res = await fetch("/api/get_token", { method: "POST" });
+          const json = await res.json();
+          sessionToken = json.data.token;
+          updateStatus("Obtained session token");
+        }
+      }
+
+      async function createNewSession() {
+        if (!sessionToken) await getToken();
+        const payload = {
+          session_token: sessionToken,
+          avatar_id: document.getElementById("avatarID").value,
+        };
+        const voice = document.getElementById("voiceID").value.trim();
+        if (voice) payload.voice_id = voice;
+
+        const res = await fetch("/api/new_session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+
+        const json = await res.json();
+        console.log("New session response:", json);
+        if (!json.data) {
+          updateStatus("Failed to create session: " + JSON.stringify(json));
+          return;
+        }
+        sessionInfo = json.data;
+        updateStatus("Session created with KB");
+      }
+
+     async function startStreamingSession(autoReconnect = true) {
+  if (!sessionInfo) return alert("Session info missing");
+
+  // tell your backend to start the HeyGen stream
+  await fetch("/api/start_stream", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      session_token: sessionToken,
+      session_id: sessionInfo.session_id,
+    }),
+  });
+
+  // close previous room if exists
+  if (room) {
+    try { room.disconnect(); } catch {}
+  }
+
+  // create the LiveKit room with debug logging
+  room = new LivekitClient.Room({ adaptiveStream: true, dynacast: true });
+  room.engine.logLevel = "debug"; 
+
+  // track subscribed/unsubscribed, participant events as before
+  room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, publication, participant) => {
+    console.log("TrackSubscribed:", { track, publication, participant });
+    try {
+      if (track.kind === LivekitClient.Track.Kind.Video) track.attach(mediaElement);
+      if (track.kind === LivekitClient.Track.Kind.Audio) {
+        const audioEl = document.createElement("audio");
+        audioEl.autoplay = true;
+        audioEl.srcObject = new MediaStream([track.mediaStreamTrack]);
+        document.body.appendChild(audioEl);
+      }
+    } catch (err) { console.error(err); }
+  });
+
+ // room.on(LivekitClient.RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
+ // if (participant.identity === "heygen") {
+  //  updateStatus("HeyGen track gone, attempting to resume...");
+   // resumeHeyGenStream();
+ // }
+//});
+
+
+  room.on(LivekitClient.RoomEvent.Disconnected, async (reason) => {
+    console.warn("Room disconnected:", reason);
+   // if (autoReconnect) {
+     // updateStatus("Attempting to restart session...");
+     // setTimeout(async () => {
+       // await restartSession();
+    //  }, 1500); // small delay to avoid tight loop
+   // }
+  });
+
+  // connect after listeners are set
+  try {
+    await room.connect(sessionInfo.url, sessionInfo.access_token, {
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+    });
+    updateStatus("Connected to LiveKit & streaming started");
+  } catch (err) {
+    console.error("Failed to connect to LiveKit:", err);
+    if (autoReconnect) setTimeout(restartSession, 1500);
+  }
+}
+
+async function restartSession() {
+  updateStatus("Restarting HeyGen session...");
+
+  // 1. Optionally close existing session
+  try { await closeSession(); } catch (e) { console.warn("Error closing session:", e); }
+
+  // 2. Create a new session
+  await createNewSession();
+
+  // 3. Start streaming again
+  await startStreamingSession(true);
+
+  // 4. Reconnect microphone if needed
+  if (window.__rec_nodes) stopRecording();
+  startRecording();
+}
+
+// Example
+async function resumeHeyGenStream() {
+  if (!sessionInfo || !sessionToken) return;
+  try {
+    await fetch("/api/start_stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ session_token: sessionToken, session_id: sessionInfo.session_id })
+    });
+    updateStatus("HeyGen stream resumed without closing room");
+  } catch (err) {
+    console.error("Failed to resume HeyGen stream:", err);
+    updateStatus("Error resuming HeyGen stream: " + err.message);
+  }
+}
+
+
+
+// helper to decode JWT
+function parseJwt(token) {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(atob(base64));
+  } catch (err) {
+    console.error("Failed to parse JWT:", err);
+    return {};
+  }
+}
+
+
+      async function closeSession() {
+        if (!sessionInfo) return;
+        await fetch("/api/close_session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            session_token: sessionToken,
+            session_id: sessionInfo.session_id,
+          }),
+        });
+        updateStatus("Session closed");
+        sessionInfo = sessionToken = null;
+        mediaElement.srcObject = null;
+        if (room) room.disconnect();
+        if (ws) ws.close();
+      }
+
+      async function getMicDeviceId() {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const mic = devices.find((d) => d.kind === "audioinput");
+        return mic?.deviceId;
+      }
+
+      // Utility converts Float32 -> 16-bit signed PCM (same as you had)
+      function floatTo16BitPCM(float32Array) {
+        const l = float32Array.length;
+        const buffer = new ArrayBuffer(l * 2);
+        const view = new DataView(buffer);
+        let offset = 0;
+        for (let i = 0; i < l; i++, offset += 2) {
+          let s = Math.max(-1, Math.min(1, float32Array[i]));
+          s = s < 0 ? s * 0x8000 : s * 0x7fff;
+          view.setInt16(offset, s, true);
+        }
+        return buffer;
+      }
+
+      async function startRecording() {
+        if (!sessionInfo) return alert("Start session first!");
+
+        ws = new WebSocket(
+          `ws://${location.host}/ws/speech?session_token=${sessionToken}&session_id=${sessionInfo.session_id}`
+        );
+        ws.binaryType = "arraybuffer";
+
+        ws.onopen = () => updateStatus("WS connected. Start speaking...");
+        ws.onmessage = (ev) => {
+          // server sends JSON messages; parse safely
+          let data;
+          try {
+            data = JSON.parse(ev.data);
+            console.log(data, "dta>>>>>>>>>>>>>>>>>>>>>>")
+          } catch (e) {
+            data = { type: "raw", text: ev.data };
+          }
+          if (data.type === "partial_transcript") {
+            updateStatus("Partial: " + data.text);
+          } else if (data.type === "final_transcript") {
+            updateStatus("Final: " + data.text);
+          } else if (data.type === "heygen_response") {
+            updateStatus("HeyGen responded (task): " + JSON.stringify(data.data));
+          } else {
+            updateStatus("Server: " + ev.data);
+          }
+        };
+
+        ws.onclose = () => updateStatus("WS closed");
+        ws.onerror = (err) => updateStatus("WS error: " + (err?.message || err));
+
+        const desiredRate = 16000;
+        const inputStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            deviceId: await getMicDeviceId(),
+            echoCancellation: true,
+            noiseSuppression: true,
+          },
+        });
+
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)({
+          sampleRate: desiredRate,
+        });
+        const actualRate = audioCtx.sampleRate;
+
+        const sourceNode = audioCtx.createMediaStreamSource(inputStream);
+        const processorNode = audioCtx.createScriptProcessor(4096, 1, 1);
+
+        function downsampleBuffer(buffer, sampleRate, outSampleRate) {
+          if (outSampleRate === sampleRate) return buffer;
+          const ratio = sampleRate / outSampleRate;
+          const newLength = Math.round(buffer.length / ratio);
+          const result = new Float32Array(newLength);
+          let offsetResult = 0;
+          let offsetBuffer = 0;
+          while (offsetResult < result.length) {
+            const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
+            let accum = 0,
+              count = 0;
+            for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
+              accum += buffer[i];
+              count++;
+            }
+            result[offsetResult] = accum / count;
+            offsetResult++;
+            offsetBuffer = nextOffsetBuffer;
+          }
+          return result;
+        }
+
+        processorNode.onaudioprocess = (e) => {
+          if (!ws || ws.readyState !== WebSocket.OPEN) return;
+          const float32 = e.inputBuffer.getChannelData(0);
+          const maybeDownsampled = actualRate === desiredRate ? float32 : downsampleBuffer(float32, actualRate, desiredRate);
+          const pcm16 = floatTo16BitPCM(maybeDownsampled);
+          ws.send(pcm16);
+        };
+
+        sourceNode.connect(processorNode);
+        processorNode.connect(audioCtx.destination); // keep node alive
+
+        // store references for stop
+        window.__rec_nodes = { sourceNode, processorNode, audioCtx, inputStream };
+        updateStatus(`Recording started (ctx ${actualRate} Hz → sending 16k PCM)`);
+      }
+
+      function stopRecording() {
+        const nodes = window.__rec_nodes;
+        if (nodes) {
+          try {
+            nodes.processorNode.disconnect();
+            nodes.sourceNode.disconnect();
+            nodes.inputStream.getTracks().forEach((t) => t.stop());
+            nodes.audioCtx.close();
+          } catch (e) {
+            console.warn(e);
+          }
+        }
+        if (ws) {
+          try { ws.close(); } catch {}
+          ws = null;
+        }
+        updateStatus("Recording stopped");
+      }
+
+      // Event listeners
+      document
+        .getElementById("startBtn")
+        .addEventListener("click", async () => {
+          await createNewSession();
+          await startStreamingSession();
+        });
+      document.getElementById("closeBtn").addEventListener("click", closeSession);
+      document.getElementById("recordBtn").addEventListener("click", startRecording);
+      document.getElementById("stopRecordBtn").addEventListener("click", stopRecording);
+    </script>
+  </body>
+</html>
