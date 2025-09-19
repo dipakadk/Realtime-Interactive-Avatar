@@ -1,6 +1,3 @@
-Here’s your updated **README.md** with the workflow diagram included under a new **Workflow** section:
-
-````markdown
 # HeyGen Streaming with Live Audio Input
 
 This repository demonstrates a **real-time audio streaming system** using FastAPI, Deepgram for realtime speech-to-text (STT), HeyGen for avatar streaming, and LiveKit for WebRTC audio/video streaming. Users can interact with avatars in real-time using their microphone.
