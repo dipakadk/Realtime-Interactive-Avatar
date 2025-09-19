@@ -1,4 +1,4 @@
-# HeyGen Streaming with Live Audio Input
+# Realtime HeyGen Streaming Avatar
 
 This repository demonstrates a **real-time audio streaming system** using FastAPI, Deepgram for realtime speech-to-text (STT), HeyGen for avatar streaming, and LiveKit for WebRTC audio/video streaming. Users can interact with avatars in real-time using their microphone.
 
@@ -51,7 +51,7 @@ cd Realtime-Interactive-Avatar
 2. **Install Python dependencies**
 
 ```bash
-pip install -r requirements.txt
+uv add -r requirements.txt
 ```
 
 3. **Create `.env` file**
